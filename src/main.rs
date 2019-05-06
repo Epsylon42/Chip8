@@ -38,15 +38,15 @@ fn main() {
         std::io::Cursor::new(&[
             0x60, 0x0A,
             0x61, 0x0A,
-            0xA2, 0x08,
-            0xD0, 0x13,
-            0b01011010,
-            0b00111100,
-            0b01011010,
+            0xA0, 0x00,
+            0xD0, 0x15,
+            0x60, 0x0E,
+            0xA0, 0x05,
+            0xD0, 0x15,
         ])
     ).unwrap();
 
-    for _ in 0..4 {
+    for _ in 0..7 {
         chip.system.tick().unwrap();
     }
 

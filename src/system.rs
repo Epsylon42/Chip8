@@ -2,6 +2,7 @@ use failure::{Error, Fail};
 
 #[macro_use]
 mod opcode;
+mod fonts;
 
 #[derive(Debug, Fail)]
 pub enum SystemError {
@@ -90,8 +91,11 @@ pub struct System {
 
 impl Default for System {
     fn default() -> Self {
+        let mut mem = [0; 4096];
+        mem[..fonts::FONTS.len()].copy_from_slice(fonts::FONTS);
+
         System {
-            mem: [0; 4096],
+            mem: mem,
             screen: [0; SCREEN_LEN],
             registers: Default::default(),
             timers: Default::default(),
@@ -140,11 +144,11 @@ impl System {
                 self.registers.write(reg, val)?;
             },
 
-            x = Opcode::SetIndex => {
+            long x = Opcode::SetIndex => {
                 self.registers.index = x;
             },
 
-            (x, y, height) = Opcode::Disp => {
+            (x, y, height) = Opcode::Draw => {
                 let x = self.registers.read(x)?;
                 let y = self.registers.read(y)?;
 
