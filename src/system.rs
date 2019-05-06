@@ -26,6 +26,10 @@ impl Registers {
         self.reg[15]
     }
 
+    pub fn carry_set(&mut self, value: u8) {
+        self.reg[15] = value;
+    }
+
     pub fn read(&self, reg: u8) -> Result<u8, SystemError> {
         self.reg
             .get(reg as usize)
@@ -144,12 +148,18 @@ impl System {
                 let x = self.registers.read(x)?;
                 let y = self.registers.read(y)?;
 
+                let mut carry = false;
+
                 for byte in 0..height {
                     let value: u8 = self.read_mem(self.registers.index + byte as u16)?;
                     for pixel in 0..8 {
-                        self.draw(x + pixel, y + byte, (value >> (7 - pixel)) & 1 != 0);
+                        if self.draw(x + pixel, y + byte, (value >> (7 - pixel)) & 1 != 0) {
+                            carry = true;
+                        }
                     }
                 }
+
+                self.registers.carry_set(carry as u8);
             },
 
             otherwise x => {
@@ -172,15 +182,10 @@ impl System {
             .get_mut(y as usize * SCREEN_WIDTH as usize / 8 + x_byte as usize)
         {
             let current_bit = (*current_byte >> (7 - x_bit)) & 1 != 0;
-            let ret = current_bit == true && value == false;
 
-            if value {
-                *current_byte |= 1 << (7 - x_bit); // set target bit to 1
-            } else {
-                *current_byte &= !(1 << (7 - x_bit)); // set target bit to 0
-            }
+            *current_byte ^= (value as u8) << (7 - x_bit);
 
-            return ret;
+            return current_bit && value;
         }
 
         return false;
