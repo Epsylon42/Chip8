@@ -12,6 +12,10 @@ pub enum SystemError {
     InvalidMemoryAccess { addr: u16 },
     #[fail(display = "Invalid register access: {:X}", reg)]
     InvalidRegister { reg: u8 },
+    #[fail(display = "Stack overflow")]
+    StackOverflow,
+    #[fail(display = "Stack underflow")]
+    StackUnderflow,
 }
 
 const PROGRAM_START: u16 = 0x200;
@@ -139,6 +143,52 @@ impl System {
 
         match_opcodes! {
             self.read_mem_pair(self.registers.pc)?;
+
+            noarg Opcode::ClearScreen => {
+                self.screen.copy_from_slice(&[0; SCREEN_LEN]);
+            },
+
+            noarg Opcode::Return => {
+                if self.stack.sp == 0 {
+                    return Err(SystemError::StackUnderflow);
+                }
+
+                self.stack.sp -= 1;
+                self.registers.pc = self.stack.stack[self.stack.sp as usize];
+            },
+
+            long addr = Opcode::Jump => {
+                self.registers.pc = addr;
+            },
+
+            long addr = Opcode::Call => {
+                if self.stack.sp as usize == self.stack.stack.len() {
+                    return Err(SystemError::StackOverflow);
+                }
+
+                self.stack.stack[self.stack.sp as usize] = self.registers.pc;
+                self.stack.sp += 1;
+
+                self.registers.pc = addr;
+            },
+
+            (reg, val) = Opcode::SkipIfEq => {
+                if self.registers.read(reg)? == val {
+                    self.registers.pc += 2;
+                }
+            },
+
+            (reg, val) = Opcode::SkipIfNeq => {
+                if self.registers.read(reg)? != val {
+                    self.registers.pc += 2;
+                }
+            },
+
+            (reg1, reg2) = Opcode::SkipIfRegEq => {
+                if self.registers.read(reg1)? == self.registers.read(reg2)? {
+                    self.registers.pc += 2;
+                }
+            },
 
             (reg, val) = Opcode::SetReg => {
                 self.registers.write(reg, val)?;
