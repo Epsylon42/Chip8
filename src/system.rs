@@ -16,6 +16,10 @@ pub enum SystemError {
     StackOverflow,
     #[fail(display = "Stack underflow")]
     StackUnderflow,
+    #[fail(display = "Invalid key: {:X}", key)]
+    InvalidKey { key: u8 },
+    #[fail(display = "Reached zero instruction")]
+    ZeroInstruction,
 }
 
 const PROGRAM_START: u16 = 0x200;
@@ -51,6 +55,13 @@ impl Registers {
 
         Ok(())
     }
+
+    pub fn with<U, F: FnOnce(&mut u8) -> U>(&mut self, reg: u8, func: F) -> Result<U, SystemError> {
+        self.reg
+            .get_mut(reg as usize)
+            .ok_or(SystemError::InvalidRegister { reg })
+            .map(func)
+    }
 }
 
 impl Default for Registers {
@@ -78,6 +89,15 @@ pub struct Stack {
 #[derive(Default)]
 pub struct Keys {
     pub keys: [u8; 16],
+}
+
+impl Keys {
+    pub fn pressed(&self, key: u8) -> Result<bool, SystemError> {
+        self.keys
+            .get(key as u8 as usize)
+            .ok_or(SystemError::InvalidKey { key })
+            .map(|key| *key != 0)
+    }
 }
 
 const SCREEN_WIDTH: u8 = 64;
@@ -141,6 +161,10 @@ impl System {
     pub fn tick(&mut self) -> Result<(), SystemError> {
         use opcode::Opcode;
 
+        if self.read_mem_pair(self.registers.pc)? == 0 {
+            return Err(SystemError::ZeroInstruction);
+        }
+
         match_opcodes! {
             self.read_mem_pair(self.registers.pc)?;
 
@@ -155,14 +179,16 @@ impl System {
 
                 self.stack.sp -= 1;
                 self.registers.pc = self.stack.stack[self.stack.sp as usize];
+                return Ok(());
             },
 
             long addr = Opcode::Jump => {
                 self.registers.pc = addr;
+                return Ok(());
             },
 
             long addr = Opcode::Call => {
-                if self.stack.sp as usize == self.stack.stack.len() {
+                if self.stack.sp as usize >= self.stack.stack.len() {
                     return Err(SystemError::StackOverflow);
                 }
 
@@ -170,6 +196,7 @@ impl System {
                 self.stack.sp += 1;
 
                 self.registers.pc = addr;
+                return Ok(());
             },
 
             (reg, val) = Opcode::SkipIfEq => {
@@ -190,12 +217,164 @@ impl System {
                 }
             },
 
+            (reg1, reg2) = Opcode::SkipIfRegNeq => {
+                if self.registers.read(reg1)? != self.registers.read(reg2)? {
+                    self.registers.pc += 2;
+                }
+            },
+
             (reg, val) = Opcode::SetReg => {
                 self.registers.write(reg, val)?;
             },
 
+            (reg, val) = Opcode::SAddReg => {
+                let carry = self.registers.with(reg, |reg| {
+                    let (new, overflow) = reg.overflowing_add(val);
+                    *reg = new;
+                    overflow as u8
+                })?;
+                self.registers.carry_set(carry)
+            },
+
+            (reg1, reg2) = Opcode::MovReg => {
+                self.registers.write(reg1, self.registers.read(reg2)?)?;
+            },
+
+            (reg1, reg2) = Opcode::OrReg => {
+                let val = self.registers.read(reg2)?;
+                self.registers.with(reg1, |reg| *reg |= val)?;
+            },
+
+            (reg1, reg2) = Opcode::AndReg => {
+                let val = self.registers.read(reg2)?;
+                self.registers.with(reg1, |reg| *reg &= val)?;
+            },
+
+            (reg1, reg2) = Opcode::XorReg => {
+                let val = self.registers.read(reg2)?;
+                self.registers.with(reg1, |reg| *reg ^= val)?;
+            },
+
+            (reg1, reg2) = Opcode::AddReg => {
+                let val = self.registers.read(reg2)?;
+                let carry = self.registers.with(reg1, |reg| {
+                    let (new, overflow) = reg.overflowing_add(val);
+                    *reg = new;
+                    overflow as u8
+                })?;
+                self.registers.carry_set(carry);
+            },
+
+            (reg1, reg2) = Opcode::SubReg => {
+                let val = self.registers.read(reg2)?;
+                let carry = self.registers.with(reg1, |reg| {
+                    let (new, overflow) = reg.overflowing_sub(val);
+                    *reg = new;
+                    overflow as u8
+                })?;
+                self.registers.carry_set(carry);
+            },
+
+            (reg, _a) = Opcode::RShiftReg => {
+                let carry = self.registers.with(reg, |reg| {
+                    let bit = *reg & 1;
+                    *reg >>= 1;
+                    bit
+                })?;
+                self.registers.carry_set(carry);
+            },
+
+            (reg1, reg2) = Opcode::RSubReg => {
+                let val = self.registers.read(reg2)?;
+                let carry = self.registers.with(reg1, |reg| {
+                    let (new, overflow) = val.overflowing_sub(*reg);
+                    *reg = new;
+                    overflow as u8
+                })?;
+                self.registers.carry_set(carry);
+            },
+
+            (reg, _a) = Opcode::LShiftReg => {
+                let carry = self.registers.with(reg, |reg| {
+                    let bit = (*reg >> 7) & 1;
+                    *reg <<= 1;
+                    bit
+                })?;
+                self.registers.carry_set(carry);
+            },
+
             long x = Opcode::SetIndex => {
                 self.registers.index = x;
+            },
+
+            long addr = Opcode::JumpPlus => {
+                self.registers.pc = self.registers.read(0)? as u16 + addr;
+                return Ok(());
+            },
+
+            (reg, pattern) = Opcode::Rand => {
+                self.registers.write(reg, rand::random::<u8>() & pattern)?;
+            },
+
+            reg = Opcode::AddIndex => {
+                self.registers.index += self.registers.read(reg)? as u16;
+            },
+
+            key = Opcode::SkipIfKeyPressed => {
+                if self.keys.pressed(key)? {
+                    self.registers.pc += 2;
+                }
+            },
+
+            key = Opcode::SkipIfKeyNotPressed => {
+                if !self.keys.pressed(key)? {
+                    self.registers.pc += 2;
+                }
+            },
+
+            reg = Opcode::GetDelay => {
+                self.registers.write(reg, self.timers.delay)?;
+            },
+
+            _reg = Opcode::BlockGetKey => {
+                unimplemented!("BlockGetKey opcode");
+            },
+
+            reg = Opcode::SetDelay => {
+                self.timers.delay = self.registers.read(reg)?;
+            },
+
+            reg = Opcode::SetSound => {
+                self.timers.sound = self.registers.read(reg)?;
+            },
+
+            reg = Opcode::GetSprite => {
+                self.registers.index = 5 * self.registers.read(reg)? as u16;
+            },
+
+            reg = Opcode::BinCoded => {
+                let mut val = self.registers.read(reg)?;
+                let first = val / 100;
+                val %= 100;
+                let second = val / 10;
+                val %= 10;
+                let third = val;
+
+                self.write_mem(self.registers.index, first)?;
+                self.write_mem(self.registers.index + 1, second)?;
+                self.write_mem(self.registers.index + 2, third)?;
+            },
+
+            reg = Opcode::RegDump => {
+                for i in 0..=reg {
+                    self.write_mem(self.registers.index + i as u16, self.registers.read(i)?)?
+                }
+            },
+
+            reg = Opcode::RegLoad => {
+                for i in 0..=reg {
+                    self.registers.write(i, self.read_mem(self.registers.index + i as u16)?)?;
+                }
             },
 
             (x, y, height) = Opcode::Draw => {
@@ -222,10 +401,18 @@ impl System {
         }
 
         self.registers.pc += 2;
-        self.timers.delay = self.timers.delay.saturating_sub(1);
-        self.timers.sound = self.timers.sound.saturating_sub(1);
 
         Ok(())
+    }
+
+    /// decrements delay and sound timers
+    /// returns true if sound timer is reduced to zero
+    pub fn dec_timers(&mut self) -> bool {
+        self.timers.delay = self.timers.delay.saturating_sub(1);
+        let prev_sound = self.timers.sound;
+        self.timers.sound = self.timers.sound.saturating_sub(1);
+
+        prev_sound != 0 && self.timers.sound == 0
     }
 
     fn draw(&mut self, x: u8, y: u8, value: bool) -> bool {

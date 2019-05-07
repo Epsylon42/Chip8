@@ -23,34 +23,50 @@ impl Chip8 {
     }
 
     pub fn draw(&mut self) -> Result<(), Error> {
-        self.window.draw(
-            self.system.screen(),
-            64,
-            32,
-        )
+        self.window.draw(self.system.screen(), 64, 32)
+    }
+
+    fn display_loop(&mut self) -> Result<(), Error> {
+        loop {
+            self.draw()?;
+            std::thread::sleep(std::time::Duration::from_millis(
+                (1.0 / 30.0 * 1000.0f32) as u64,
+            ))
+        }
+    }
+
+    pub fn run(&mut self) -> Result<(), Error> {
+        let delta = std::time::Duration::from_millis((1.0 / 30.0 * 1000.0f32) as u64);
+
+        let mut next_update = std::time::Instant::now() + delta;
+        loop {
+            let res = self.system.tick();
+            if let Err(system::SystemError::ZeroInstruction) = res {
+                println!("Reached the end of the program. Entering infinite loop");
+                self.display_loop()?;
+            } else {
+                res?;
+            }
+
+            if self.system.dec_timers() {
+                println!("Beep!");
+            }
+
+            let now = std::time::Instant::now();
+            if now >= next_update {
+                next_update = now + delta;
+                self.draw()?;
+            }
+        }
     }
 }
 
 fn main() {
     let mut chip = Chip8::new().unwrap();
 
-    chip.system.load(
-        std::io::Cursor::new(&[
-            0x60, 0x0A,
-            0x61, 0x0A,
-            0xA0, 0x00,
-            0xD0, 0x15,
-            0x60, 0x0E,
-            0xA0, 0x05,
-            0xD0, 0x15,
-        ])
-    ).unwrap();
+    chip.system
+        .load_from_file(std::env::args().skip(1).next().unwrap())
+        .unwrap();
 
-    for _ in 0..7 {
-        chip.system.tick().unwrap();
-    }
-
-    chip.draw().unwrap();
-
-    chip.window.ev.run_forever(|_| glium::glutin::ControlFlow::Continue);
+    chip.run().unwrap();
 }

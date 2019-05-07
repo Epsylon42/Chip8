@@ -1,52 +1,52 @@
 #[derive(Clone, Copy)]
 #[repr(u16)]
 pub enum Opcode {
-    ClearScreen = 0x00E0,
+    ClearScreen = 0x00E0, //
 
-    Return = 0x00EE,
-    Jump = 0x1000,
-    Call = 0x2000,
+    Return = 0x00EE, //
+    Jump = 0x1000, //
+    Call = 0x2000, //
 
-    SkipIfEq = 0x3000,
-    SkipIfNeq = 0x4000,
-    SkipIfRegEq = 0x5000,
+    SkipIfEq = 0x3000, //
+    SkipIfNeq = 0x4000, //
+    SkipIfRegEq = 0x5000, //
 
-    SetReg = 0x6000,
-    SAddReg = 0x7000,
+    SetReg = 0x6000, //
+    SAddReg = 0x7000, //
 
-    MovReg = 0x8000,
-    OrReg = 0x8001,
-    AndReg = 0x8002,
-    XorReg = 0x8003,
-    AddReg = 0x8004,
-    SubReg = 0x8005,
-    RShiftReg = 0x8006,
-    RSubReg = 0x8007,
-    LShiftReg = 0x800E,
+    MovReg = 0x8000, //
+    OrReg = 0x8001, //
+    AndReg = 0x8002, //
+    XorReg = 0x8003, //
+    AddReg = 0x8004, //
+    SubReg = 0x8005, //
+    RShiftReg = 0x8006, //
+    RSubReg = 0x8007, //
+    LShiftReg = 0x800E, //
 
-    SkipIfRegNeq = 0x9000,
+    SkipIfRegNeq = 0x9000, //
 
-    SetIndex = 0xA000,
-    JumpPlus = 0xB000,
+    SetIndex = 0xA000, //
+    JumpPlus = 0xB000, //
     Rand = 0xC000,
 
-    Draw = 0xD000,
+    Draw = 0xD000, //
 
-    SkipIfKeyPressed = 0xE09E,
-    SkipIfKeyNotPressed = 0xE0A1,
+    SkipIfKeyPressed = 0xE09E, //
+    SkipIfKeyNotPressed = 0xE0A1, //
 
-    GetDelay = 0xF007,
+    GetDelay = 0xF007, //
     BlockGetKey = 0xF00A,
 
-    SetDelay = 0xF015,
-    SetSound = 0xF018,
+    SetDelay = 0xF015, //
+    SetSound = 0xF018, //
 
-    AddIndex = 0xF01E,
-    GetSprite = 0xF029,
+    AddIndex = 0xF01E, //
+    GetSprite = 0xF029, //
 
-    BinCoded = 0xF033,
-    RegDump = 0xF055,
-    RegLoad = 0xF065,
+    BinCoded = 0xF033, //
+    RegDump = 0xF055, //
+    RegLoad = 0xF065, //
 }
 
 impl Opcode {
@@ -174,6 +174,7 @@ macro_rules! match_opcodes {
 
     (@branches{$value:expr} noarg $opcode:expr => $body:expr, $($rest:tt)*) => {
         if $opcode.cmp($value) {
+            #[allow(unreachable_code)]
             break $body;
         }
         match_opcodes!(@branches{$value} $($rest)*)
@@ -182,6 +183,7 @@ macro_rules! match_opcodes {
     (@branches{$value:expr} $x:ident = $opcode:expr => $body:expr, $($rest:tt)*) => {
         if $opcode.cmp($value) {
             let $x = $opcode.get_arg1_u8($value);
+            #[allow(unreachable_code)]
             break $body;
         }
         match_opcodes!(@branches{$value} $($rest)*)
@@ -190,6 +192,7 @@ macro_rules! match_opcodes {
     (@branches{$value:expr} long $x:ident = $opcode:expr => $body:expr, $($rest:tt)*) => {
         if $opcode.cmp($value) {
             let $x = $opcode.get_arg1_u16($value);
+            #[allow(unreachable_code)]
             break $body;
         }
         match_opcodes!(@branches{$value} $($rest)*)
@@ -198,6 +201,7 @@ macro_rules! match_opcodes {
     (@branches{$value:expr} ($x1:ident, $x2:ident) = $opcode:expr => $body:expr, $($rest:tt)*) => {
         if $opcode.cmp($value) {
             let ($x1, $x2) = $opcode.get_arg2($value);
+            #[allow(unreachable_code)]
             break $body;
         }
         match_opcodes!(@branches{$value} $($rest)*)
@@ -206,6 +210,7 @@ macro_rules! match_opcodes {
     (@branches{$value:expr} ($x1:ident, $x2:ident, $x3:ident) = $opcode:expr => $body:expr, $($rest:tt)*) => {
         if $opcode.cmp($value) {
             let ($x1, $x2, $x3) = $opcode.get_arg3($value);
+            #[allow(unreachable_code)]
             break $body;
         }
         match_opcodes!(@branches{$value} $($rest)*)
