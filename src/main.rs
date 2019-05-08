@@ -62,6 +62,32 @@ impl Chip8 {
             std::thread::sleep(std::time::Duration::from_micros(
                 (2400.0f32.recip() * 1000000.0) as u64,
             ));
+
+            let mut err = None;
+            let mut exit = false;
+            let ev = &mut self.window.ev;
+            let sys = &mut self.system;
+            ev.poll_events(|event| {
+                match keys::map_key(event) {
+                    keys::MapKeyResult::Event { key, pressed } => {
+                        if let Err(e) = sys.process_key_event(key, pressed) {
+                            err = Some(e);
+                        }
+                    }
+
+                    keys::MapKeyResult::Exit => {
+                        exit = true;
+                    }
+
+                    keys::MapKeyResult::None => {}
+                }
+            });
+            if exit {
+                return Ok(())
+            }
+            if let Some(err) = err {
+                return Err(err.into());
+            }
         }
     }
 

@@ -110,9 +110,16 @@ pub struct Keys {
 impl Keys {
     pub fn pressed(&self, key: u8) -> Result<bool, SystemError> {
         self.keys
-            .get(key as u8 as usize)
+            .get(key as usize)
             .ok_or(SystemError::InvalidKey { key })
             .map(|key| *key != 0)
+    }
+
+    pub fn set_key_state(&mut self, key: u8, state: bool) -> Result<(), SystemError> {
+        self.keys
+            .get_mut(key as usize)
+            .ok_or(SystemError::InvalidKey{ key })
+            .map(|key| *key = state as u8)
     }
 }
 
@@ -127,6 +134,7 @@ pub struct System {
     pub timers: Timers,
     pub stack: Stack,
     pub keys: Keys,
+    key_pressed: Option<u8>,
 }
 
 impl Default for System {
@@ -141,6 +149,7 @@ impl Default for System {
             timers: Default::default(),
             stack: Default::default(),
             keys: Default::default(),
+            key_pressed: None,
         }
     }
 }
@@ -171,6 +180,14 @@ impl System {
 
         self.mem[PROGRAM_START as usize..PROGRAM_START as usize + buf.len()].copy_from_slice(&buf);
 
+        Ok(())
+    }
+
+    pub fn process_key_event(&mut self, key: u8, state: bool) -> Result<(), SystemError> {
+        self.keys.set_key_state(key, state)?;
+        if state && self.key_pressed.is_none() {
+            self.key_pressed = Some(key);
+        }
         Ok(())
     }
 
@@ -377,8 +394,12 @@ impl System {
                 self.registers.write(reg, self.timers.delay)?;
             },
 
-            _reg = Opcode::BlockGetKey => {
-                unimplemented!("BlockGetKey opcode");
+            reg = Opcode::BlockGetKey => {
+                if let Some(key) = self.key_pressed {
+                    self.registers.write(reg, key)?;
+                } else {
+                    return Ok(());
+                }
             },
 
             reg = Opcode::SetDelay => {
@@ -446,6 +467,7 @@ impl System {
         }
 
         self.registers.pc += 2;
+        self.key_pressed = None;
 
         Ok(())
     }
