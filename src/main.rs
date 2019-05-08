@@ -36,11 +36,12 @@ impl Chip8 {
     }
 
     pub fn run(&mut self) -> Result<(), Error> {
-        let delta = std::time::Duration::from_millis((1.0 / 30.0 * 1000.0f32) as u64);
+        let delta = std::time::Duration::from_millis((1.0 / 60.0 * 1000.0f32) as u64);
+        let mut debug = system::debug::Debugger::disabled();
 
         let mut next_update = std::time::Instant::now() + delta;
         loop {
-            let res = self.system.tick();
+            let res = self.system.tick(&mut debug);
             if let Err(system::SystemError::ZeroInstruction) = res {
                 println!("Reached the end of the program. Entering infinite loop");
                 self.display_loop()?;
@@ -57,6 +58,25 @@ impl Chip8 {
                 next_update = now + delta;
                 self.draw()?;
             }
+
+            std::thread::sleep(std::time::Duration::from_micros(
+                (2400.0f32.recip() * 1000000.0) as u64,
+            ));
+        }
+    }
+
+    pub fn run_debug(&mut self) -> Result<(), Error> {
+        let mut debug = system::debug::Debugger::enabled();
+        loop {
+            println!("{}", self.system.registers);
+            self.system.tick(&mut debug)?;
+
+            if self.system.dec_timers() {
+                println!("Beep!");
+            }
+
+            self.draw()?;
+            std::io::stdin().read_line(&mut String::new())?;
         }
     }
 }

@@ -3,6 +3,7 @@ use failure::{Error, Fail};
 #[macro_use]
 mod opcode;
 mod fonts;
+pub mod debug;
 
 #[derive(Debug, Fail)]
 pub enum SystemError {
@@ -30,11 +31,26 @@ pub struct Registers {
     pub pc: u16,
 }
 
+impl std::fmt::Display for Registers {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let nfmt = |n| if n < 16 { format!(" {:X}", n) } else { format!("{:X}", n) };
+
+        writeln!(f, "pc: {:X}", self.pc)?;
+        writeln!(f, " I: {:X}", self.index)?;
+        for i in 0..16 {
+            write!(f, "| v{:X}: {} ", i, nfmt(self.reg[i]))?;
+            if (i + 1) % 4 == 0 {
+                writeln!(f, "|")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Registers {
     pub fn carry(&self) -> u8 {
         self.reg[15]
     }
-
     pub fn carry_set(&mut self, value: u8) {
         self.reg[15] = value;
     }
@@ -158,17 +174,22 @@ impl System {
         Ok(())
     }
 
-    pub fn tick(&mut self) -> Result<(), SystemError> {
+    pub fn tick(&mut self, dbg: &mut debug::Debugger) -> Result<(), SystemError> {
         use opcode::Opcode;
 
-        if self.read_mem_pair(self.registers.pc)? == 0 {
+        let opcode = self.fetch_instruction()?;
+
+        dbg.debug(|| format!("OPCODE {:X}", opcode));
+
+        if opcode == 0 {
             return Err(SystemError::ZeroInstruction);
         }
 
         match_opcodes! {
-            self.read_mem_pair(self.registers.pc)?;
+            opcode;
 
             noarg Opcode::ClearScreen => {
+                dbg.debug("Clearing screen");
                 self.screen.copy_from_slice(&[0; SCREEN_LEN]);
             },
 
@@ -179,10 +200,13 @@ impl System {
 
                 self.stack.sp -= 1;
                 self.registers.pc = self.stack.stack[self.stack.sp as usize];
-                return Ok(());
+
+                dbg.debug(|| format!("Returning to {:X} + 2", self.registers.pc));
             },
 
             long addr = Opcode::Jump => {
+                dbg.debug(|| format!("Jumping to {:X}", addr));
+
                 self.registers.pc = addr;
                 return Ok(());
             },
@@ -192,6 +216,8 @@ impl System {
                     return Err(SystemError::StackOverflow);
                 }
 
+                dbg.debug(|| format!("Calling function at {:X}", addr));
+
                 self.stack.stack[self.stack.sp as usize] = self.registers.pc;
                 self.stack.sp += 1;
 
@@ -200,40 +226,55 @@ impl System {
             },
 
             (reg, val) = Opcode::SkipIfEq => {
+                dbg.debug(|| format!("Skip if v{:X} == {:X}", reg, val));
                 if self.registers.read(reg)? == val {
+                    dbg.debug("Success");
                     self.registers.pc += 2;
+                } else {
+                    dbg.debug("Fail");
                 }
             },
 
             (reg, val) = Opcode::SkipIfNeq => {
+                dbg.debug(|| format!("Skip if v{:X} != {:X}", reg, val));
                 if self.registers.read(reg)? != val {
+                    dbg.debug("Success");
                     self.registers.pc += 2;
+                } else {
+                    dbg.debug("Fail");
                 }
             },
 
             (reg1, reg2) = Opcode::SkipIfRegEq => {
+                dbg.debug(|| format!("Skip if v{:X} == v{:X}", reg1, reg2));
                 if self.registers.read(reg1)? == self.registers.read(reg2)? {
+                    dbg.debug("Success");
                     self.registers.pc += 2;
+                } else {
+                    dbg.debug("Fail");
                 }
             },
 
             (reg1, reg2) = Opcode::SkipIfRegNeq => {
+                dbg.debug(|| format!("Skip if v{:X} != v{:X}", reg1, reg2));
                 if self.registers.read(reg1)? != self.registers.read(reg2)? {
+                    dbg.debug("Success");
                     self.registers.pc += 2;
+                } else {
+                    dbg.debug("Fail");
                 }
             },
 
             (reg, val) = Opcode::SetReg => {
                 self.registers.write(reg, val)?;
+                dbg.debug(|| format!("Write {:X} to v{:X}", val, reg));
             },
 
             (reg, val) = Opcode::SAddReg => {
-                let carry = self.registers.with(reg, |reg| {
-                    let (new, overflow) = reg.overflowing_add(val);
-                    *reg = new;
-                    overflow as u8
+                self.registers.with(reg, |reg| {
+                    *reg = reg.wrapping_add(val);
                 })?;
-                self.registers.carry_set(carry)
+                dbg.debug(|| format!("Add {:X} to v{:X}", val, reg));
             },
 
             (reg1, reg2) = Opcode::MovReg => {
@@ -270,7 +311,7 @@ impl System {
                 let carry = self.registers.with(reg1, |reg| {
                     let (new, overflow) = reg.overflowing_sub(val);
                     *reg = new;
-                    overflow as u8
+                    !overflow as u8
                 })?;
                 self.registers.carry_set(carry);
             },
@@ -289,7 +330,7 @@ impl System {
                 let carry = self.registers.with(reg1, |reg| {
                     let (new, overflow) = val.overflowing_sub(*reg);
                     *reg = new;
-                    overflow as u8
+                    !overflow as u8
                 })?;
                 self.registers.carry_set(carry);
             },
@@ -386,7 +427,11 @@ impl System {
                 for byte in 0..height {
                     let value: u8 = self.read_mem(self.registers.index + byte as u16)?;
                     for pixel in 0..8 {
-                        if self.draw(x + pixel, y + byte, (value >> (7 - pixel)) & 1 != 0) {
+                        if self.draw(
+                            ((x as u16 + pixel as u16) % SCREEN_WIDTH as u16) as u8,
+                            ((y as u16 + byte as u16) % SCREEN_HEIGHT as u16) as u8,
+                            (value >> (7 - pixel)) & 1 != 0
+                        ) {
                             carry = true;
                         }
                     }
@@ -415,7 +460,7 @@ impl System {
         prev_sound != 0 && self.timers.sound == 0
     }
 
-    fn draw(&mut self, x: u8, y: u8, value: bool) -> bool {
+    pub fn draw(&mut self, x: u8, y: u8, value: bool) -> bool {
         let x_bit = x % 8;
         let x_byte = x / 8;
         if let Some(current_byte) = self
@@ -432,7 +477,11 @@ impl System {
         return false;
     }
 
-    fn read_mem_pair(&self, ptr: u16) -> Result<u16, SystemError> {
+    pub fn fetch_instruction(&self) -> Result<u16, SystemError> {
+        self.read_mem_pair(self.registers.pc)
+    }
+
+    pub fn read_mem_pair(&self, ptr: u16) -> Result<u16, SystemError> {
         let fst = *self
             .mem
             .get(ptr as usize)
@@ -445,7 +494,7 @@ impl System {
         Ok((fst as u16) << 8 | snd as u16)
     }
 
-    fn write_mem_pair(&mut self, ptr: u16, data: u16) -> Result<(), SystemError> {
+    pub fn write_mem_pair(&mut self, ptr: u16, data: u16) -> Result<(), SystemError> {
         let fst = (data >> 8) as u8;
         let snd = (data & 0x00FF) as u8;
 
@@ -459,14 +508,14 @@ impl System {
         Ok(())
     }
 
-    fn read_mem(&self, ptr: u16) -> Result<u8, SystemError> {
+    pub fn read_mem(&self, ptr: u16) -> Result<u8, SystemError> {
         self.mem
             .get(ptr as usize)
             .cloned()
             .ok_or(SystemError::InvalidMemoryAccess { addr: ptr })
     }
 
-    fn write_mem(&mut self, ptr: u16, data: u8) -> Result<(), SystemError> {
+    pub fn write_mem(&mut self, ptr: u16, data: u8) -> Result<(), SystemError> {
         if ptr as usize >= self.mem.len() {
             return Err(SystemError::InvalidMemoryAccess { addr: ptr });
         }
